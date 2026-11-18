@@ -1,49 +1,49 @@
-# Cobros de MetaRed
+# MetaRed payments
 
-Vocabulario de los cobros de la plataforma MetaRed mediante Getnet y el TPV Virtual de Redsys.
+Vocabulary for payments on the MetaRed platform through Getnet and the Redsys Virtual POS.
 
 ## Language
 
 **MetaRed**:
-Organización que requiere que los cobros de su plataforma se procesen mediante Getnet, incluyendo compras de cursos, certificados y otros modelos de pago.
+Organization requiring its platform payments to be processed through Getnet, including course purchases, certificates, and other payment models.
 
 **Getnet**:
-Proveedor de procesamiento de pagos de Banco Santander requerido por MetaRed para sus cobros en línea.
+Banco Santander's payment processing provider, required by MetaRed for its online payments.
 
-**TPV Virtual de Redsys**:
-Servicio mediante el cual Getnet procesa los pagos en línea de esta integración.
-_Avoid_: Getnet como sinónimo del TPV Virtual de Redsys.
+**Redsys Virtual POS**:
+Service through which Getnet processes online payments for this integration.
+_Avoid_: Getnet as a synonym for the Redsys Virtual POS.
 
-**Página de pago alojada**:
-Página del TPV Virtual de Redsys a la que se dirige al comprador para realizar el pago.
-_Avoid_: Formulario de tarjeta de la plataforma.
+**Hosted payment page**:
+Redsys Virtual POS page to which the buyer is directed to make a payment.
+_Avoid_: Platform card entry form.
 
-**Compra de curso**:
-Adquisición del acceso a un curso de pago por un usuario de MetaRed.
+**Course purchase**:
+Acquisition of access to a paid course by a MetaRed user.
 
-**Universidad**:
-Institución responsable de ofrecer el curso a la que se atribuye su cobro en los reportes. No identifica necesariamente la institución a la que pertenece el comprador.
+**University**:
+Institution responsible for offering the course, to which its payment is attributed in reports. It does not necessarily identify the institution to which the buyer belongs.
 
-**Organización del curso (`org`)**:
-Organización a la que pertenece un curso en Open edX. En MetaRed generalmente representa una universidad y sirve como base para atribuir el cobro del curso.
-_Avoid_: Institución del comprador como sinónimo de organización del curso.
+**Course organization (`org`)**:
+Organization to which a course belongs in Open edX. In MetaRed, it generally represents a university and provides the basis for attributing the course payment.
+_Avoid_: Buyer's institution as a synonym for course organization.
 
-**Intento de pago**:
-Cada ocasión en que se solicita al TPV Virtual el pago de una compra, identificada por un número de pedido único. Reintentar una compra rechazada o cancelada constituye un intento distinto.
-_Avoid_: Compra como sinónimo de intento de pago.
+**Payment attempt**:
+Each request to the Virtual POS to pay for a purchase, identified by a unique order number. Retrying a declined or canceled purchase constitutes a separate attempt.
+_Avoid_: Purchase as a synonym for payment attempt.
 
-**Notificación de pago**:
-Comunicación del TPV Virtual a la plataforma con el resultado de una transacción, cuya autenticidad se verifica mediante su firma.
-_Avoid_: Retorno del comprador como sinónimo de notificación de pago.
+**Payment notification**:
+Communication from the Virtual POS to the platform containing a transaction outcome, whose authenticity is verified through its signature.
+_Avoid_: Browser return as a synonym for payment notification.
 
-**Pago pendiente de confirmación**:
-Intento de pago cuyo resultado definitivo todavía no se conoce. Abandonar la página de pago o no recibir una notificación no equivale a un rechazo ni a una cancelación confirmada.
-_Avoid_: Pago rechazado o cancelado como sinónimo de pago sin confirmación.
+**Payment pending confirmation**:
+Payment attempt whose definitive outcome is not yet known. Abandoning the payment page or not receiving a notification does not constitute a decline or a confirmed cancellation.
+_Avoid_: Declined or canceled payment as a synonym for an unconfirmed payment.
 
-**Entrega del acceso**:
-Otorgamiento al comprador del acceso al curso adquirido. Puede quedar pendiente aunque el pago ya esté aprobado.
-_Avoid_: Aprobación del pago como sinónimo de entrega del acceso.
+**Access fulfillment**:
+Granting the buyer access to the purchased course. It may remain pending even when payment has already been approved.
+_Avoid_: Payment approval as a synonym for access fulfillment.
 
-**Respuesta del procesador**:
-Mensaje recibido con datos atribuidos al TPV Virtual sobre una operación de pago. Su recepción no implica que sea auténtico ni que su resultado haya sido aplicado a la compra.
-_Avoid_: Pago confirmado como sinónimo de respuesta recibida.
+**Processor response**:
+Received message containing data attributed to the Virtual POS about a payment operation. Receipt does not imply that the message is authentic or that its outcome has been applied to the purchase.
+_Avoid_: Confirmed payment as a synonym for a received response.
