@@ -16,8 +16,7 @@ The processor will be developed in `eox-redsys` as an independent extension of `
 - A new order number for each payment attempt initiated from Open edX.
 - Recording of payment outcomes through the existing `openedx-zeitlabs-payments` models, including processor data in `Transaction.response`, without a processor-specific model or table.
 - Preservation of historical purchase data and attribution by course and Open edX organization (`org`).
-- Resolution of unconfirmed payments and recovery of failed enrollments through Django Admin, with permissions and an audit trail.
-- Required changes to the e-commerce plugin to preserve special characters, process payments independently of the browser, and retain the invoice when enrollment fails.
+- Preservation of special characters in data sent through the e-commerce plugin, and browser-independent payment processing through the shared payment flow.
 - Validation in the Redsys test environment and preparation of deployment configuration.
 
 This release excludes certificate purchases as a standalone product, other products, subscriptions, recurring payments, installment payments, refunds from Open edX, DCC, and report generation. The data needed for a future report using a PDF template will be retained, including payment, course, university, and user information.
@@ -37,7 +36,7 @@ Payment attribution will use the course's `org`, which generally represents a un
 3. The attempt and its unique order number are recorded before sending the buyer to the Virtual POS. The request contains the amount, currency, and required references and URLs, and is signed with the merchant key.
 4. The buyer enters card details and completes authentication on the Virtual POS hosted page.
 5. The Virtual POS sends its notification to the server. The integration checks the signature, merchant, terminal, order, amount, and currency before applying an outcome to a purchase.
-6. A valid approval records the payment, generates the invoice, and grants access through the plugin. If enrollment fails, the payment and invoice are retained and access fulfillment remains pending.
+6. A valid approval records the payment and delegates invoicing and course access to the plugin. If enrollment fails, the existing plugin records and failure handling are used; the buyer is directed to support and another charge must not be initiated for an already approved purchase.
 7. The browser return page displays the recorded status. If no valid outcome is available yet, it shows pending confirmation and blocks another attempt for the same product until the configured pending-payment timeout expires.
 
 Confirmation must work even if the buyer closes the browser. Duplicate notifications, page reloads, and concurrent notification and browser return processing must not duplicate payments, invoices, or enrollments.
@@ -51,7 +50,7 @@ The following are functional states. Their mapping to the plugin's existing stat
 | Attempt submitted without a definitive outcome | Confirmation pending, no access | Blocked until the configured timeout expires |
 | Pending-payment timeout expired without a definitive outcome | Outcome still unconfirmed, no access | Allowed with a new order number, unless the purchase has already been approved |
 | Payment approved and access granted | Success and access to the invoice and course | Blocked |
-| Payment approved and enrollment failed | Payment and invoice retained, message to contact support | Blocked; retry access fulfillment |
+| Payment approved and enrollment failed | Existing plugin failure handling and records; message to contact support | Blocked |
 | Definitive decline | Decline message, no access | Allowed with a new order number |
 | Confirmed definitive cancellation | Purchase canceled, no access | Allowed with a new order number |
 | Invalid notification or mismatched data | No purchase state transition; sanitized diagnostic logging | Not unblocked by that notification |
@@ -86,32 +85,24 @@ Virtual POS responses will supplement this history with data for each attempt, w
 
 Data provenance will remain distinct: purchase data comes from the platform, while outcome data comes from verified Virtual POS responses. A response can be recorded even when it contains no authorization code or card type.
 
-## Django Admin operations
+## Future operational enhancements
 
-### Unconfirmed payments
+The first release relies on the existing records and operational tools in `openedx-zeitlabs-payments`. Additional Django Admin tracking, manual resolution of unconfirmed payments, invoice retention changes, and new actions to recover failed enrollments are outside this release's scope and acceptance criteria.
 
-Support will be able to locate an attempt by order, purchase, and user, review received responses, and verify the outcome in the Virtual POS portal. Support will be able to record a resolution with the operator, date, verification reference, and reason.
-
-A verified approval will follow the payment recording, invoicing, and fulfillment flow. A definitive decline or cancellation will allow a new attempt. The intervention will be recorded as a support action, distinguished from an authentic Virtual POS notification. For attempts without a definitive outcome, expiration of `REDSYS_PENDING_PAYMENT_TIMEOUT` also allows a new attempt without requiring support intervention, subject to the retry rules above.
-
-### Approved payments with failed enrollment
-
-Support will be able to retry access fulfillment from Django Admin using the already approved payment. The action will retain the invoice and will not initiate a charge or generate another invoice. If access has already been granted, repeating the action will not duplicate enrollment. Failures and actions taken will be recorded.
-
-Actions will be restricted through Django Admin permissions. The buyer will see a message explaining the fulfillment problem and directing them to contact support.
+If operational use shows that the existing transaction responses, audit trail, and tools are insufficient, these capabilities may be proposed separately as improvements to the shared plugin, with their own requirements and estimate. No additional tracking or recovery interface is required for this release. Pending attempts remain eligible for a new attempt after `REDSYS_PENDING_PAYMENT_TIMEOUT` expires, according to the retry rules above.
 
 ## Component responsibilities
 
 | Component | Responsibility |
 | --- | --- |
 | `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, and mapping outcomes to the shared recording flow |
-| `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and operational tools; shared changes required to meet this PRD |
+| `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and existing operational tools |
 | Open edX | User, course, organization, and enrollment |
 | Virtual POS configuration | Credentials and terminal, enabled notifications, contracted payment methods, internal retries disabled, and DCC disabled |
 
 The reviewed plugin exposes browser return and status query views that depend on the authenticated user, but does not provide a complete processor notification interface. The implementation must add server notification handling and reuse the shared processing flow with concurrency control.
 
-In the reviewed version, the invoice and enrollment are created within the same atomic transaction. Retaining the invoice when enrollment fails will require changes to that flow, in addition to preserving accented characters and ñ in data sent to the processor. These changes are in scope and must be checked against the specific plugin version to be deployed.
+The release reuses the deployed plugin's existing invoicing and fulfillment behavior, including its transaction boundaries and failure records. Changes to retain invoices after failed enrollment, additional recovery actions, or enhanced Django Admin tracking are outside this release. Compatibility and preservation of accented characters and ñ must be checked against the specific plugin version to be deployed.
 
 ## Acceptance criteria
 
@@ -136,9 +127,7 @@ In the reviewed version, the invoice and enrollment are created within the same 
 | Amount integrity | The amount and currency match the server-side purchase; browser manipulation cannot change them |
 | Virtual POS unavailable | No access is granted or payment declared approved; a retry is allowed if no payment is in progress. If the outcome is uncertain, retry follows the configured pending-payment timeout |
 | Previously purchased course | Another purchase is blocked; a free enrollment does not prevent purchasing paid access |
-| Approved payment with failed enrollment | Payment and invoice are retained, the failure is recorded, and the user is directed to contact support |
-| Access recovery | An authorized operator retries fulfillment from Django Admin without another charge or invoice |
-| Manual resolution of a pending payment | Support records the outcome verified in the Virtual POS, with evidence, operator, date, and reason |
+| Approved payment with failed enrollment | The integration uses the plugin's existing failure handling and records, directs the user to support, and blocks another charge for the approved purchase |
 | Payment methods | The flow is validated with debit, credit, international, and AMEX cards using the cases available for the test merchant |
 | Special characters | Course and user names preserve accented characters and ñ in transmitted and displayed data |
 | Historical data | Later changes to the course price, name, or organization do not alter the recorded purchase data |
@@ -147,7 +136,7 @@ In the reviewed version, the invoice and enrollment are created within the same 
 
 ## Validation and deployment
 
-Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, support resolution, and access recovery. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
+Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, and delegation of fulfillment failures to the existing plugin flow. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
 
 Before production, the full flow will be validated in the Virtual POS test environment, including approval and decline outcomes, browser return, notification delivery, and required payment methods. Getnet must confirm that the merchant's contracted capabilities and configuration support those methods.
 
@@ -162,7 +151,7 @@ Deployment configuration will include protected credentials, environment selecti
 | Configuration and deployment | 2 |
 | Original total | 14 |
 
-The 14 hours are a preliminary reference, subject to revision during technical design. The final estimate must include integration with the existing transaction and audit records, historical data, Django Admin resolution, browser-independent processing, concurrency control, and plugin changes to retain invoices and recover enrollment.
+The 14 hours remain a preliminary reference, subject to revision during technical design for the retained scope, including integration with existing transaction and audit records, historical data, browser-independent processing, concurrency control, and the configurable retry timeout. Additional Django Admin tracking, manual resolution, and fulfillment recovery enhancements are excluded from this estimate and would be assessed separately if needed.
 
 ## Technical references
 
