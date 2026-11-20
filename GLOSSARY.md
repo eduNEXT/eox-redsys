@@ -15,16 +15,19 @@ _Avoid_: Platform card entry form.
 Acquisition of access to a paid course by a buyer.
 
 **Payment attempt**:
-Each request to the Virtual POS to pay for a purchase, identified by a unique order number. Retrying a declined or canceled purchase constitutes a separate attempt.
+Each request to the Virtual POS to pay for a purchase, identified by a unique order number. Starting a new payment request after a non-authorized outcome constitutes a separate attempt.
 _Avoid_: Purchase as a synonym for payment attempt.
 
 **Payment notification**:
 Communication from the Virtual POS to the platform containing a transaction outcome, whose authenticity is verified through its signature.
 _Avoid_: Browser return as a synonym for payment notification.
 
+**Non-authorized payment outcome**:
+Verified payment result indicating that the payment was not authorized. Declines and cancellations reported by the payment gateway share this functional outcome; an unknown result is not a non-authorized outcome.
+
 **Payment pending confirmation**:
-Payment attempt whose definitive outcome is not yet known. Abandoning the payment page or not receiving a notification does not constitute a decline or a confirmed cancellation.
-_Avoid_: Declined or canceled payment as a synonym for an unconfirmed payment.
+Payment attempt whose definitive outcome is not yet known. Abandoning the payment page or not receiving a notification does not establish a non-authorized outcome.
+_Avoid_: Non-authorized payment as a synonym for an unconfirmed payment.
 
 **Access fulfillment**:
 Granting the buyer access to the purchased course. It may remain pending even when payment has already been approved.
