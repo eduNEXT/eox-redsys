@@ -1,32 +1,18 @@
-# MetaRed payments
+# Redsys payments
 
-Vocabulary for payments on the MetaRed platform through Getnet and the Redsys Virtual POS.
+Vocabulary for course purchases and payments through the Redsys Virtual POS.
 
 ## Language
 
-**MetaRed**:
-Organization requiring its platform payments to be processed through Getnet, including course purchases, certificates, and other payment models.
-
-**Getnet**:
-Banco Santander's payment processing provider, required by MetaRed for its online payments.
-
 **Redsys Virtual POS**:
-Service through which Getnet processes online payments for this integration.
-_Avoid_: Getnet as a synonym for the Redsys Virtual POS.
+Payment gateway used by an online merchant to request payments and receive their outcomes.
 
 **Hosted payment page**:
 Redsys Virtual POS page to which the buyer is directed to make a payment.
 _Avoid_: Platform card entry form.
 
 **Course purchase**:
-Acquisition of access to a paid course by a MetaRed user.
-
-**University**:
-Institution responsible for offering the course, to which its payment is attributed in reports. It does not necessarily identify the institution to which the buyer belongs.
-
-**Course organization (`org`)**:
-Organization to which a course belongs in Open edX. In MetaRed, it generally represents a university and provides the basis for attributing the course payment.
-_Avoid_: Buyer's institution as a synonym for course organization.
+Acquisition of access to a paid course by a buyer.
 
 **Payment attempt**:
 Each request to the Virtual POS to pay for a purchase, identified by a unique order number. Retrying a declined or canceled purchase constitutes a separate attempt.
