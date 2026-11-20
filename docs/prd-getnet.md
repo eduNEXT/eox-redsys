@@ -38,7 +38,7 @@ Payment attribution will use the course's `org`, which generally represents a un
 4. The buyer enters card details and completes authentication on the Virtual POS hosted page.
 5. The Virtual POS sends its notification to the server. The integration checks the signature, merchant, terminal, order, amount, and currency before applying an outcome to a purchase.
 6. A valid approval records the payment, generates the invoice, and grants access through the plugin. If enrollment fails, the payment and invoice are retained and access fulfillment remains pending.
-7. The browser return page displays the recorded status. If no valid outcome is available yet, it shows pending confirmation and blocks another attempt for the same product.
+7. The browser return page displays the recorded status. If no valid outcome is available yet, it shows pending confirmation and blocks another attempt for the same product until the configured pending-payment timeout expires.
 
 Confirmation must work even if the buyer closes the browser. Duplicate notifications, page reloads, and concurrent notification and browser return processing must not duplicate payments, invoices, or enrollments.
 
@@ -48,14 +48,19 @@ The following are functional states. Their mapping to the plugin's existing stat
 
 | Situation | Outcome for the buyer and purchase | Payment retry |
 | --- | --- | --- |
-| Attempt submitted without a definitive outcome | Confirmation pending, no access | Blocked |
+| Attempt submitted without a definitive outcome | Confirmation pending, no access | Blocked until the configured timeout expires |
+| Pending-payment timeout expired without a definitive outcome | Outcome still unconfirmed, no access | Allowed with a new order number, unless the purchase has already been approved |
 | Payment approved and access granted | Success and access to the invoice and course | Blocked |
 | Payment approved and enrollment failed | Payment and invoice retained, message to contact support | Blocked; retry access fulfillment |
 | Definitive decline | Decline message, no access | Allowed with a new order number |
 | Confirmed definitive cancellation | Purchase canceled, no access | Allowed with a new order number |
 | Invalid notification or mismatched data | No purchase state transition; evidence recorded | Not unblocked by that notification |
 
-Closing the page, navigating back, or reaching a timeout does not prove that a payment was canceled or declined. The attempt remains pending until a definitive outcome arrives or support records a verified resolution.
+Closing the page, navigating back, or reaching a timeout does not prove that a payment was canceled or declined. A Django setting, `REDSYS_PENDING_PAYMENT_TIMEOUT`, will configure how long an attempt without a definitive outcome blocks a new attempt. Its value is a positive integer in seconds, measured from the recorded creation time of the payment attempt. The default value will be defined during technical design. Reloading the return page does not restart this period.
+
+Once the timeout expires, the buyer may initiate a new attempt with a new order number, provided the purchase has not already been approved. Expiration only releases the retry restriction; it does not mark the original payment as declined or canceled, cancel it at the Virtual POS, or grant access. A confirmed decline or cancellation allows an immediate retry without waiting for this timeout.
+
+Valid late notifications must still be processed against their original attempt, even after the timeout expires or a new attempt starts. An approval blocks further attempts and fulfills the purchase only once. If different attempts for the same purchase are approved, both payments must remain identifiable and the duplicate charge must be flagged for operational review without creating a second enrollment. Timeout-based retries do not guarantee that a second charge cannot occur.
 
 Internal Virtual POS retries using the same order number will be disabled. After a definitive decline or cancellation, the buyer may initiate another attempt from Open edX with a new order number. Resolving one attempt must not modify a different purchase.
 
@@ -93,7 +98,7 @@ Data provenance will remain distinct: purchase data comes from the platform, whi
 
 Support will be able to locate an attempt by order, purchase, and user, review received responses, and verify the outcome in the Virtual POS portal. Support will be able to record a resolution with the operator, date, verification reference, and reason.
 
-A verified approval will follow the payment recording, invoicing, and fulfillment flow. A definitive decline or cancellation will allow a new attempt. The intervention will be recorded as a support action, distinguished from an authentic Virtual POS notification. Elapsed time alone will not enable another purchase.
+A verified approval will follow the payment recording, invoicing, and fulfillment flow. A definitive decline or cancellation will allow a new attempt. The intervention will be recorded as a support action, distinguished from an authentic Virtual POS notification. For attempts without a definitive outcome, expiration of `REDSYS_PENDING_PAYMENT_TIMEOUT` also allows a new attempt without requiring support intervention, subject to the retry rules above.
 
 ### Approved payments with failed enrollment
 
@@ -122,8 +127,11 @@ In the reviewed version, the invoice and enrollment are created within the same 
 | Immediate decline | The decline is reported, no access is granted, and a new attempt with a different order number is allowed |
 | Definitive cancellation | No access is granted, and a new attempt is allowed only after the definitive cancellation is known |
 | Abandonment or browser closure | This is not treated as cancellation; if the outcome is unknown, the attempt remains pending |
-| Pending confirmation | The buyer is informed and another purchase of the same product is blocked |
-| Late approval | The purchase is completed and access is granted without buyer intervention |
+| Pending confirmation | The buyer is informed and another attempt for the same product is blocked until `REDSYS_PENDING_PAYMENT_TIMEOUT` expires |
+| Pending-payment timeout | Before the configured interval expires, retry is blocked; at or after expiration, a new attempt with a different order number is allowed if no approval is recorded. The original outcome remains unconfirmed and no access is granted |
+| Configurable timeout | Changing the positive duration in Django settings changes retry eligibility; reloading the return page does not reset the attempt creation time |
+| Late approval | The notification is matched to its original attempt, including after timeout or a new attempt; the purchase is fulfilled only once and further attempts are blocked |
+| Approvals for different attempts | Both payments remain identifiable; the duplicate charge is flagged for operational review without a second enrollment |
 | Late decline | The decline is recorded and the outcome is displayed, without granting access |
 | Browser closure after payment | A valid notification completes the purchase without a browser return |
 | Duplicate notifications | Evidence of each receipt is retained and the business effect is applied only once |
@@ -131,7 +139,7 @@ In the reviewed version, the invoice and enrollment are created within the same 
 | Invalid signature | The sanitized message and validation failure are retained without modifying any purchase |
 | Unknown order or mismatched data | The problem is recorded without approving or fulfilling a purchase based on that data |
 | Amount integrity | The amount and currency match the server-side purchase; browser manipulation cannot change them |
-| Virtual POS unavailable | No access is granted or payment declared approved; a retry is allowed if no payment is in progress, and the attempt remains pending if its outcome is uncertain |
+| Virtual POS unavailable | No access is granted or payment declared approved; a retry is allowed if no payment is in progress. If the outcome is uncertain, retry follows the configured pending-payment timeout |
 | Previously purchased course | Another purchase is blocked; a free enrollment does not prevent purchasing paid access |
 | Approved payment with failed enrollment | Payment and invoice are retained, the failure is recorded, and the user is directed to contact support |
 | Access recovery | An authorized operator retries fulfillment from Django Admin without another charge or invoice |
@@ -144,11 +152,11 @@ In the reviewed version, the invoice and enrollment are created within the same 
 
 ## Validation and deployment
 
-Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, support resolution, and access recovery.
+Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, support resolution, and access recovery. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
 
 Before production, the full flow will be validated in the Virtual POS test environment, including approval and decline outcomes, browser return, notification delivery, and required payment methods. Getnet must confirm that the merchant's contracted capabilities and configuration support those methods.
 
-Deployment configuration will include protected credentials, environment selection, URLs reachable by the Virtual POS, notification enablement, and disabling DCC and internal retries. The compatible version of `openedx-zeitlabs-payments` and its required changes will be verified.
+Deployment configuration will include protected credentials, environment selection, URLs reachable by the Virtual POS, notification enablement, `REDSYS_PENDING_PAYMENT_TIMEOUT` in Django settings, and disabling DCC and internal retries. The compatible version of `openedx-zeitlabs-payments` and its required changes will be verified.
 
 ## Preliminary estimate
 
