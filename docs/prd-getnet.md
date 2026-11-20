@@ -35,7 +35,7 @@ An installation may use the extension points below to attribute payments to a co
 2. The platform obtains the EUR price from its purchase data. The browser does not determine the amount or currency accepted for the charge.
 3. The attempt and its unique order number are recorded before sending the buyer to the Virtual POS. The request contains the amount, currency, and required references and URLs, and is signed with the merchant key.
 4. The buyer enters card details and completes authentication on the Virtual POS hosted page.
-5. The Virtual POS sends its notification to the server. The integration checks the signature, merchant, terminal, order, amount, and currency before applying an outcome to a purchase.
+5. The Virtual POS sends its server-to-server notification to a URL implemented in `eox-redsys`. Its view checks the signature, merchant, terminal, order, amount, and currency, then delegates the validated outcome to the shared payment flow through the Redsys processor.
 6. A valid approval records the payment and delegates invoicing and course access to the plugin. If enrollment fails, the existing plugin records and failure handling are used; the buyer is directed to support and another charge must not be initiated for an already approved purchase.
 7. The browser return page displays the recorded status. If no valid outcome is available yet, it shows pending confirmation and blocks another attempt for the same product until the configured pending-payment timeout expires.
 
@@ -67,7 +67,7 @@ If the Virtual POS is unavailable and it can be established that no payment was 
 
 ## Processor response storage
 
-`eox-redsys` will reuse the existing persistence flow in `openedx-zeitlabs-payments`, calling `process_payment_and_update_records` with the validated and normalized Redsys outcome. No processor-specific response model or MySQL table will be created.
+`eox-redsys` will reuse the existing persistence flow in `openedx-zeitlabs-payments`, calling the plugin's `process_payment_and_update_records` method (Python module: `zeitlabs_payments`) with the validated and normalized Redsys outcome. No processor-specific response model or MySQL table will be created.
 
 The plugin's `Transaction` model stores the gateway transaction reference, status, payment method, amount, currency, reason, and processor response in its existing `response` JSON field. `Cart.gateway_order_id` identifies the order associated with the payment attempt, and `Invoice` links the resulting invoice to its transaction.
 
@@ -106,12 +106,14 @@ If operational use shows that the existing transaction responses, audit trail, a
 
 | Component | Responsibility |
 | --- | --- |
-| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, mapping outcomes to the shared recording flow, and payment extension points |
+| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, server notification URL and view, response validation, attempt identification, calls to the shared processing flow, and payment extension points |
 | `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and existing operational tools |
 | Open edX | User, course, organization, and enrollment |
 | Virtual POS configuration | Credentials and terminal, enabled notifications, contracted payment methods, internal retries disabled, and DCC disabled |
 
-The reviewed plugin exposes browser return and status query views that depend on the authenticated user, but does not provide a complete processor notification interface. The implementation must add server notification handling and reuse the shared processing flow with concurrency control.
+`eox-redsys` owns the Redsys server notification URL, view, and processor-specific validation. After matching the notification to its attempt and validating its signature and purchase data, code in `eox-redsys` calls the existing `process_payment_and_update_records` method belonging to the `openedx-zeitlabs-payments` plugin (Python module: `zeitlabs_payments`). This method is provided by the payments plugin, not by Open edX core. The processor calls it within the same application process. The notification must work without a buyer session or browser return.
+
+No shared-plugin notification endpoint or notification-specific change to `openedx-zeitlabs-payments` is required. The shared plugin remains responsible for its existing transaction recording, invoicing, and fulfillment flow. Technical design must verify duplicate and concurrent processing behavior in the deployed version; the `eox-redsys` integration must ensure that repeated or concurrent notifications do not duplicate business effects.
 
 The release reuses the deployed plugin's existing invoicing and fulfillment behavior, including its transaction boundaries and failure records. Changes to retain invoices after failed enrollment, additional recovery actions, or enhanced Django Admin tracking are outside this release. Compatibility and preservation of accented characters and ñ must be checked against the specific plugin version to be deployed.
 
@@ -129,7 +131,7 @@ The release reuses the deployed plugin's existing invoicing and fulfillment beha
 | Late approval | The notification is matched to its original attempt, including after timeout or a new attempt; the purchase is fulfilled only once and further attempts are blocked |
 | Approvals for different attempts | Both payments remain identifiable; the duplicate charge is flagged for operational review without a second enrollment |
 | Late decline | The decline is recorded and the outcome is displayed, without granting access |
-| Browser closure after payment | A valid notification completes the purchase without a browser return |
+| Browser closure after payment | The notification view in `eox-redsys` validates the response and invokes the existing shared payment flow without a buyer session or browser return |
 | Duplicate notifications | The shared duplicate-handling and audit flow is reused; payment, invoice, and enrollment are not duplicated |
 | Reload or concurrency | Return page reloads and concurrent notifications do not duplicate payment, invoice, or enrollment |
 | Invalid signature | The sanitized message and validation failure are retained through existing diagnostic facilities without modifying any purchase; the retention policy remains subject to review |
