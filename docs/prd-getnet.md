@@ -14,7 +14,7 @@ The processor will be developed in `eox-redsys` as an independent extension of `
 - Signed requests, redirection to the Virtual POS, verified notifications, and return pages showing the outcome or pending confirmation.
 - Cardholder authentication handled by the Virtual POS through its EMV3DS flow.
 - A new order number for each payment attempt initiated from Open edX.
-- Storage of processor responses in a Django model and its MySQL table.
+- Recording of payment outcomes through the existing `openedx-zeitlabs-payments` models, including processor data in `Transaction.response`, without a processor-specific model or table.
 - Preservation of historical purchase data and attribution by course and Open edX organization (`org`).
 - Resolution of unconfirmed payments and recovery of failed enrollments through Django Admin, with permissions and an audit trail.
 - Required changes to the e-commerce plugin to preserve special characters, process payments independently of the browser, and retain the invoice when enrollment fails.
@@ -54,7 +54,7 @@ The following are functional states. Their mapping to the plugin's existing stat
 | Payment approved and enrollment failed | Payment and invoice retained, message to contact support | Blocked; retry access fulfillment |
 | Definitive decline | Decline message, no access | Allowed with a new order number |
 | Confirmed definitive cancellation | Purchase canceled, no access | Allowed with a new order number |
-| Invalid notification or mismatched data | No purchase state transition; evidence recorded | Not unblocked by that notification |
+| Invalid notification or mismatched data | No purchase state transition; sanitized diagnostic logging | Not unblocked by that notification |
 
 Closing the page, navigating back, or reaching a timeout does not prove that a payment was canceled or declined. A Django setting, `REDSYS_PENDING_PAYMENT_TIMEOUT`, will configure how long an attempt without a definitive outcome blocks a new attempt. Its value is a positive integer in seconds, measured from the recorded creation time of the payment attempt. The default value will be defined during technical design. Reloading the return page does not restart this period.
 
@@ -68,21 +68,15 @@ If the Virtual POS is unavailable and it can be established that no payment was 
 
 ## Processor response storage
 
-A Django model and its MySQL table will be created to retain every response received from the processor. This includes approvals, declines, duplicate notifications, and messages with invalid signatures. Browser returns containing processor parameters will be distinguished from server notifications.
+`eox-redsys` will reuse the existing persistence flow in `openedx-zeitlabs-payments`, calling `process_payment_and_update_records` with the validated and normalized Redsys outcome. No processor-specific response model or MySQL table will be created.
 
-Each received message must be able to retain the following, when available:
+The plugin's `Transaction` model stores the gateway transaction reference, status, payment method, amount, currency, reason, and processor response in its existing `response` JSON field. `Cart.gateway_order_id` identifies the order associated with the payment attempt, and `Invoice` links the resulting invoice to its transaction.
 
-- Receipt date and time, and message source: notification or browser return.
-- Relationship to the payment attempt and purchase, and the order number reported by the Virtual POS.
-- Merchant, terminal, and transaction references, result code, authorization code, and reported card type.
-- Reported amount and currency.
-- Signature validation result and purchase data verification result.
-- Received content with secrets and sensitive card data removed.
-- Processing outcome: applied, duplicate, rejected, or pending review.
+Payment events, including declines and duplicate processing, will use the shared flow's existing `AuditLog` facilities where supported. Recording a received message is distinct from accepting its outcome: an unverified notification must not approve a purchase or grant access. Rejected messages will use existing diagnostic facilities without introducing a response table. The retention policy for invalid notifications will be resolved separately during review.
 
-An invalid or unknown message may have no linked purchase. Its fields will not be considered authentic and will not be used to modify a purchase. Duplicate receipts will retain their evidence without duplicating business effects.
+Duplicate notifications will reuse the shared duplicate-handling and audit flow rather than create one transaction per receipt. Browser returns will remain distinct from server notifications and must not create another payment record for an already processed outcome.
 
-Verification will use the original data before sanitization for storage. The merchant secret key and sensitive card data will not be stored in responses or logs. Technical design will specify model names, fields, indexes, and storage limits.
+Verification will use the original data before sanitization for persistence. The merchant secret key and sensitive card data will not be stored in responses or logs. Technical design will verify the deployed plugin version's recording behavior and mapping of Redsys identifiers and result codes to its existing fields and audit actions.
 
 ## Historical data for future reports
 
@@ -110,8 +104,8 @@ Actions will be restricted through Django Admin permissions. The buyer will see 
 
 | Component | Responsibility |
 | --- | --- |
-| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, and Virtual POS response storage |
-| `openedx-zeitlabs-payments` | Checkout, purchase, transactions, invoice, access fulfillment, and operational tools; shared changes required to meet this PRD |
+| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, and mapping outcomes to the shared recording flow |
+| `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and operational tools; shared changes required to meet this PRD |
 | Open edX | User, course, organization, and enrollment |
 | Virtual POS configuration | Credentials and terminal, enabled notifications, contracted payment methods, internal retries disabled, and DCC disabled |
 
@@ -134,10 +128,11 @@ In the reviewed version, the invoice and enrollment are created within the same 
 | Approvals for different attempts | Both payments remain identifiable; the duplicate charge is flagged for operational review without a second enrollment |
 | Late decline | The decline is recorded and the outcome is displayed, without granting access |
 | Browser closure after payment | A valid notification completes the purchase without a browser return |
-| Duplicate notifications | Evidence of each receipt is retained and the business effect is applied only once |
+| Duplicate notifications | The shared duplicate-handling and audit flow is reused; payment, invoice, and enrollment are not duplicated |
 | Reload or concurrency | Return page reloads and concurrent notifications do not duplicate payment, invoice, or enrollment |
-| Invalid signature | The sanitized message and validation failure are retained without modifying any purchase |
-| Unknown order or mismatched data | The problem is recorded without approving or fulfilling a purchase based on that data |
+| Invalid signature | The sanitized message and validation failure are retained through existing diagnostic facilities without modifying any purchase; the retention policy remains subject to review |
+| Unknown order or mismatched data | The problem is recorded through existing diagnostic facilities without approving or fulfilling a purchase based on that data |
+| Shared payment records | Outcomes are recorded through the plugin flow using `Transaction.response` and existing audit facilities; no processor-specific response model or table is added |
 | Amount integrity | The amount and currency match the server-side purchase; browser manipulation cannot change them |
 | Virtual POS unavailable | No access is granted or payment declared approved; a retry is allowed if no payment is in progress. If the outcome is uncertain, retry follows the configured pending-payment timeout |
 | Previously purchased course | Another purchase is blocked; a free enrollment does not prevent purchasing paid access |
@@ -152,7 +147,7 @@ In the reviewed version, the invoice and enrollment are created within the same 
 
 ## Validation and deployment
 
-Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, support resolution, and access recovery. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
+Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, support resolution, and access recovery. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
 
 Before production, the full flow will be validated in the Virtual POS test environment, including approval and decline outcomes, browser return, notification delivery, and required payment methods. Getnet must confirm that the merchant's contracted capabilities and configuration support those methods.
 
@@ -167,7 +162,7 @@ Deployment configuration will include protected credentials, environment selecti
 | Configuration and deployment | 2 |
 | Original total | 14 |
 
-The 14 hours are a preliminary reference, subject to revision during technical design. The final estimate must include the response table and its audit trail, historical data, Django Admin resolution, browser-independent processing, concurrency control, and plugin changes to retain invoices and recover enrollment.
+The 14 hours are a preliminary reference, subject to revision during technical design. The final estimate must include integration with the existing transaction and audit records, historical data, Django Admin resolution, browser-independent processing, concurrency control, and plugin changes to retain invoices and recover enrollment.
 
 ## Technical references
 
@@ -175,3 +170,4 @@ The 14 hours are a preliminary reference, subject to revision during technical d
 - Manual provided by Getnet: `TPV-Virtual Manual Integración - Redirección V4.0.pdf`, version 4.0, dated March 20, 2025, reference RS.TE.CEL.MAN.0039. Relevant sections: submission and signing, pages 9–13; notification, page 14; browser return, page 15; parameters and retries, pages 32–34; SHA-256 alternative, pages 43–44.
 - The manual recommends `HMAC_SHA512_V1` and describes UTF-8. Parameter and code details will be completed using the supplementary document `TPV-Virtual Parámetros Entrada-Salida.xlsx`, referenced by the manual, before implementing their validation.
 - Plugin reviewed at commit [`f1669db7020951f810b9d9a3b3b996cfaf12fd36`](https://github.com/zeit-labs/openedx-zeitlabs-payments/tree/f1669db7020951f810b9d9a3b3b996cfaf12fd36): [processor contract](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/docs/how-tos/build-a-payment-processor.rst), [payment processing and invoicing](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/providers/base.py#L579-L759), [status views](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/providers/mixins.py#L127), [text normalization](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/helpers.py#L107-L216).
+- Existing plugin records at the reviewed revision: [Transaction, its response field, WebhookEvent, and AuditLog](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/models.py).
