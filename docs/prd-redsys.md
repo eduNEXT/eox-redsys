@@ -19,7 +19,7 @@ The processor will be developed in `eox-redsys` as an independent extension of `
 - Preservation of special characters in data sent through the e-commerce plugin, and browser-independent payment processing through the shared payment flow.
 - Validation in the Redsys test environment and preparation of deployment configuration.
 
-This release excludes certificate purchases as a standalone product, other products, subscriptions, recurring payments, installment payments, refunds from Open edX, DCC, and report generation. Additional data retention, installation-specific payment attribution, historical snapshots, and PDF reports are the responsibility of installation-specific extensions and are outside this processor's scope.
+This release excludes certificate purchases as a standalone product, other products, subscriptions, recurring payments, installment payments, refunds from Open edX, a custom DCC interface or currency-conversion logic, and report generation. Additional data retention, installation-specific payment attribution, historical snapshots, and PDF reports are the responsibility of installation-specific extensions and are outside this processor's scope.
 
 The release adds Redsys; it does not establish a global policy for removing other processors that an installation may have configured.
 
@@ -61,9 +61,25 @@ Once the timeout expires, the buyer may initiate a new attempt with a new order 
 
 Valid late notifications must still be processed against their original attempt, even after the timeout expires or a new attempt starts. An approval blocks further attempts and fulfills the purchase only once. If different attempts for the same purchase are approved, both payments must remain identifiable and the duplicate charge must be flagged for operational review without creating a second enrollment. Timeout-based retries do not guarantee that a second charge cannot occur.
 
-Internal Virtual POS retries using the same order number will be disabled. After a definitive decline or cancellation, the buyer may initiate another attempt from Open edX with a new order number. Resolving one attempt must not modify a different purchase.
+### Internal Virtual POS retry precedence
+
+The processor must support internal retries enabled or disabled by the acquiring bank in Redsys. An internal retry stays on the Redsys hosted page and uses the same order number; it is distinct from a new attempt initiated in Open edX, which receives a new order number and follows the retry rules above.
+
+For multiple authentic notifications matching the same order and purchase data, apply this hierarchy, as described in Annex 1.3 of the redirection manual:
+
+1. **The first valid authorized notification wins.** Apply its payment and fulfillment effects once, even if earlier notifications reported a decline. A previous decline must not cause a later approval for that order to be discarded.
+2. **Once authorization is recorded, later notifications cannot downgrade it.** Later declines do not cancel the approved purchase or revoke access; repeated approvals do not create another payment, invoice, or enrollment.
+3. **If no authorized notification has been received, the last valid notification received determines the current outcome.** A non-authorized result must remain eligible for replacement by a later approval. The same-order notification path must not treat every later message as a duplicate merely because its order number is already known.
+
+Outcome selection must remain consistent under concurrent notifications. The technical mapping to the shared plugin must preserve the ability to process an approval after a decline without bypassing signature or purchase-data validation. Notifications for different order numbers remain separate attempts, including the late-approval and duplicate-charge handling described above. Resolving one attempt must not modify a different purchase.
 
 If the Virtual POS is unavailable and it can be established that no payment was initiated, a retry will be allowed without enrollment or an approved charge being recorded. If the outcome is uncertain, the payment will be treated as pending.
+
+## Bank-managed DCC
+
+The acquiring bank enables or disables Dynamic Currency Conversion (DCC) on the terminal, and Redsys manages the currency-choice screen, exchange rate, and conversion on its hosted payment page. The processor supports either configuration. For this redirect integration, `eox-redsys` prepares the payment URL and signed request parameters using the server-side purchase amount and configured currency, then redirects the browser to Redsys. It does not build a currency-selection screen or calculate conversion rates or converted amounts.
+
+On receipt, the processor validates the original purchase amount and currency reported in `Ds_Amount` and `Ds_Currency`. Additional DCC information, such as `Ds_Amount_DCC` and `Ds_Currency_DCC`, must not replace the original purchase values used for reconciliation. Such data may be retained through the existing response field or exposed through the extension points; it does not require dedicated processor models. Exact parameter mapping will be checked against the supported Redsys parameter reference during technical design.
 
 ## Processor response storage
 
@@ -73,7 +89,7 @@ The plugin's `Transaction` model stores the gateway transaction reference, statu
 
 Payment events, including declines and duplicate processing, will use the shared flow's existing `AuditLog` facilities where supported. Recording a received message is distinct from accepting its outcome: an unverified notification must not approve a purchase or grant access. Rejected messages will use existing diagnostic facilities without introducing a response table. The retention policy for invalid notifications will be resolved separately during review.
 
-Duplicate notifications will reuse the shared duplicate-handling and audit flow rather than create one transaction per receipt. Browser returns will remain distinct from server notifications and must not create another payment record for an already processed outcome.
+Exact repeated notifications will reuse the shared duplicate-handling and audit flow rather than create one transaction per receipt. Different results for the same order must follow the internal-retry precedence rules; a later approval after a decline is not a duplicate to discard. Browser returns will remain distinct from server notifications and must not create another payment record for an already processed outcome.
 
 Verification will use the original data before sanitization for persistence. The merchant secret key and sensitive card data will not be stored in responses or logs. Technical design will verify the deployed plugin version's recording behavior and mapping of Redsys identifiers and result codes to its existing fields and audit actions.
 
@@ -109,7 +125,7 @@ If operational use shows that the existing transaction responses, audit trail, a
 | `eox-redsys` | Processor registration, Redsys configuration, signed request, redirect page, server notification URL and view, response validation, attempt identification, calls to the shared processing flow, and payment extension points |
 | `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and existing operational tools |
 | Open edX | User, course, organization, and enrollment |
-| Virtual POS configuration | Merchant credentials, terminal and configured payment currency, enabled notifications, contracted payment methods, internal retries disabled, and DCC disabled |
+| Virtual POS configuration | Merchant credentials, terminal and configured payment currency, enabled notifications, contracted payment methods, and bank-managed internal retry and DCC settings |
 
 `eox-redsys` owns the Redsys server notification URL, view, and processor-specific validation. After matching the notification to its attempt and validating its signature and purchase data, code in `eox-redsys` calls the existing `process_payment_and_update_records` method belonging to the `openedx-zeitlabs-payments` plugin (Python module: `zeitlabs_payments`). This method is provided by the payments plugin, not by Open edX core. The processor calls it within the same application process. The notification must work without a buyer session or browser return.
 
@@ -122,7 +138,7 @@ The release reuses the deployed plugin's existing invoicing and fulfillment beha
 | Scenario | Expected outcome |
 | --- | --- |
 | Approved payment | The user returns to a success page, can access the invoice, and receives course access |
-| Immediate decline | The decline is reported, no access is granted, and a new attempt with a different order number is allowed |
+| Immediate decline | The current decline is reported and no access is granted; a new Open edX attempt uses a different order number. A later valid approval for the original order can still supersede this decline |
 | Definitive cancellation | No access is granted, and a new attempt is allowed only after the definitive cancellation is known |
 | Abandonment or browser closure | This is not treated as cancellation; if the outcome is unknown, the attempt remains pending |
 | Pending confirmation | The buyer is informed and another attempt for the same product is blocked until `REDSYS_PENDING_PAYMENT_TIMEOUT` expires |
@@ -130,7 +146,7 @@ The release reuses the deployed plugin's existing invoicing and fulfillment beha
 | Configurable timeout | Changing the positive duration in Django settings changes retry eligibility; reloading the return page does not reset the attempt creation time |
 | Late approval | The notification is matched to its original attempt, including after timeout or a new attempt; the purchase is fulfilled only once and further attempts are blocked |
 | Approvals for different attempts | Both payments remain identifiable; the duplicate charge is flagged for operational review without a second enrollment |
-| Late decline | The decline is recorded and the outcome is displayed, without granting access |
+| Late decline | Without a previous approval for that order, the last valid received result determines its current outcome; after approval, a decline cannot downgrade the purchase or revoke access |
 | Browser closure after payment | The notification view in `eox-redsys` validates the response and invokes the existing shared payment flow without a buyer session or browser return |
 | Duplicate notifications | The shared duplicate-handling and audit flow is reused; payment, invoice, and enrollment are not duplicated |
 | Reload or concurrency | Return page reloads and concurrent notifications do not duplicate payment, invoice, or enrollment |
@@ -148,16 +164,17 @@ The release reuses the deployed plugin's existing invoicing and fulfillment beha
 | Optional extensions | With no extension configured, the standard payment flow and shared records work without client-specific snapshots or reporting storage |
 | Currency | The server-side purchase currency matches the configured payment currency and is supported by the terminal; the signed request and validated notification match the purchase amount and currency |
 | Incompatible currency | A purchase whose currency does not match the processor configuration is rejected before redirection, without implicit currency conversion |
-| DCC configuration | The terminal does not offer DCC in this release |
-| Retry configuration | The Virtual POS does not offer internal retries; a new attempt in Open edX receives a different order number |
+| Bank-managed DCC | Redirection works with DCC enabled or disabled. Redsys presents the currency choice and performs conversion; the processor prepares the signed request in the original purchase currency and validates the returned original amount and currency |
+| Internal retry precedence | For the same order, decline → approval → decline remains approved and is fulfilled once; repeated approvals have no additional business effect. If all results are non-authorized, the last valid received result determines the current outcome |
+| Internal retries enabled or disabled | Both terminal configurations are supported; same-order internal retries are distinguished from a new Open edX attempt with a new order number |
 
 ## Validation and deployment
 
-Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, configured currency compatibility and rejection of mismatched currencies, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, and delegation of fulfillment failures to the existing plugin flow. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase. Extension validation will cover lifecycle order, notification versus browser-return context, unverified and rejected messages, duplicate outcomes, post-commit success dispatch, observer failures, permitted request customization, and operation without installed receivers.
+Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, configured currency compatibility and rejection of mismatched currencies, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, and delegation of fulfillment failures to the existing plugin flow. Internal retry validation will cover a decline followed by approval, approval followed by decline, repeated approvals, multiple non-authorized responses, and concurrent notifications. DCC validation will cover hosted redirection with DCC enabled and disabled, keeping original purchase values separate from converted values. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase. Extension validation will cover lifecycle order, notification versus browser-return context, unverified and rejected messages, duplicate outcomes, post-commit success dispatch, observer failures, permitted request customization, and operation without installed receivers.
 
 Before production, the full flow will be validated in the Virtual POS test environment, including approval and decline outcomes, browser return, notification delivery, and required payment methods. The acquiring bank must confirm that the merchant's contracted capabilities and configuration support those methods and the configured payment currency.
 
-Deployment configuration will include protected merchant credentials, terminal, payment currency, environment selection, URLs reachable by the Virtual POS, notification enablement, `REDSYS_PENDING_PAYMENT_TIMEOUT` in Django settings, and disabling DCC and internal retries. The compatible version of `openedx-zeitlabs-payments` and its required changes will be verified.
+Deployment configuration will include protected merchant credentials, terminal, payment currency, environment selection, URLs reachable by the Virtual POS, notification enablement, `REDSYS_PENDING_PAYMENT_TIMEOUT` in Django settings, and confirmation of the bank-managed DCC and internal retry settings; neither setting is required to be disabled. The compatible version of `openedx-zeitlabs-payments` and its required changes will be verified.
 
 ## Preliminary estimate
 
@@ -177,3 +194,4 @@ The 14 hours remain a preliminary reference, subject to revision during technica
 - The manual recommends `HMAC_SHA512_V1` and describes UTF-8. Parameter and code details will be completed using the supplementary document `TPV-Virtual Parámetros Entrada-Salida.xlsx`, referenced by the manual, before implementing their validation.
 - Plugin reviewed at commit [`f1669db7020951f810b9d9a3b3b996cfaf12fd36`](https://github.com/zeit-labs/openedx-zeitlabs-payments/tree/f1669db7020951f810b9d9a3b3b996cfaf12fd36): [processor contract](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/docs/how-tos/build-a-payment-processor.rst), [payment processing and invoicing](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/providers/base.py#L579-L759), [status views](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/providers/mixins.py#L127), [text normalization](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/helpers.py#L107-L216).
 - Existing plugin records at the reviewed revision: [Transaction, its response field, WebhookEvent, and AuditLog](https://github.com/zeit-labs/openedx-zeitlabs-payments/blob/f1669db7020951f810b9d9a3b3b996cfaf12fd36/zeitlabs_payments/models.py).
+- Redsys operational reference: [DCC in redirect integrations](https://pagosonline.redsys.es/desarrolladores-inicio/documentacion-funcionalidades-avanzadas/operativa-dcc/).
