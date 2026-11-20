@@ -15,19 +15,19 @@ The processor will be developed in `eox-redsys` as an independent extension of `
 - Cardholder authentication handled by the Virtual POS through its EMV3DS flow.
 - A new order number for each payment attempt initiated from Open edX.
 - Recording of payment outcomes through the existing `openedx-zeitlabs-payments` models, including processor data in `Transaction.response`, without a processor-specific model or table.
-- Preservation of historical purchase data and attribution by course and Open edX organization (`org`).
+- Extension points using Open edX filters or Django signals around payment initiation, response receipt, validation, and processing, allowing installation-specific plugins to record additional data or react to payment events.
 - Preservation of special characters in data sent through the e-commerce plugin, and browser-independent payment processing through the shared payment flow.
 - Validation in the Redsys test environment and preparation of deployment configuration.
 
-This release excludes certificate purchases as a standalone product, other products, subscriptions, recurring payments, installment payments, refunds from Open edX, DCC, and report generation. The data needed for a future report using a PDF template will be retained, including payment, course, university, and user information.
+This release excludes certificate purchases as a standalone product, other products, subscriptions, recurring payments, installment payments, refunds from Open edX, DCC, and report generation. Additional data retention, attribution by university, historical snapshots, and PDF reports are the responsibility of installation-specific extensions and are outside this processor's scope.
 
 The release adds Getnet; it does not establish a global policy for removing other processors that an installation may have configured.
 
-## Buyers and payment attribution
+## Buyer eligibility
 
 A user who has already purchased the course will not be allowed to purchase it again. A free enrollment will allow the user to purchase paid access. An approved payment with enrollment still pending will continue to block a new purchase.
 
-Payment attribution will use the course's `org`, which generally represents a university. The buyer's institution will not determine this attribution. All organizations will share the credentials of MetaRed's single merchant account; this attribution does not imply distributing funds among merchant accounts.
+An installation may use the extension points below to attribute payments to a course organization (`org`) or retain additional reporting data. The processor does not define an attribution policy or store additional client-specific snapshots.
 
 ## Purchase flow
 
@@ -77,13 +77,24 @@ Duplicate notifications will reuse the shared duplicate-handling and audit flow 
 
 Verification will use the original data before sanitization for persistence. The merchant secret key and sensitive card data will not be stored in responses or logs. Technical design will verify the deployed plugin version's recording behavior and mapping of Redsys identifiers and result codes to its existing fields and audit actions.
 
-## Historical data for future reports
+## Payment extension points
 
-The purchase record will preserve a snapshot of the price and charged amount, EUR currency, course identity and name, responsible organization, and buyer identification needed for reporting. Subsequent changes to the course price, name, or attribution will not alter the historical record.
+`eox-redsys` will expose documented extension points using Open edX filters or Django signals. Installation-specific plugins may use them to retain course, organization, buyer, or historical reporting data in their own storage. The standard integration continues to use the existing shared payment records; no additional reporting model or snapshot is required in the processor.
 
-Virtual POS responses will supplement this history with data for each attempt, whether approved or declined. Purchases will be linked to their payments, invoices, and fulfillment outcomes to support a future PDF report by payment, course, university, and user.
+| Extension point | Moment | Available context and intended use |
+| --- | --- | --- |
+| Before payment redirection | After recording the attempt and preparing the payment URL and parameters, before final validation, signing, and sending the browser to Redsys | Purchase and attempt identifiers, order number, course and buyer references, amount, currency, target URL, and unsigned parameters. An extension can capture purchase context or customize permitted request metadata through a filter |
+| Response received | On server notification receipt or browser return, before signature and purchase-data verification | Message source, receipt time, sanitized response parameters, and correlation references when available. The response and any reported identifiers are explicitly unverified; a matching purchase may be absent. This point allows observation, not approval or fulfillment |
+| Outcome validated | After signature and merchant, terminal, order, amount, and currency checks succeed, before calling the shared processing flow | Verified outcome and result code, matched purchase and attempt, order number, amount, and currency. An extension can react to an authentic approval or decline; validation does not imply that payment recording or fulfillment succeeded |
+| Outcome processed | After the shared processing flow completes and its database changes are committed; failures are reported after rollback and shared failure handling finish | Correlation identifiers, processing disposition (applied, duplicate, or failed), available transaction and invoice references, and actual fulfillment status. An extension can update external tracking or reporting using the recorded outcome rather than inferring success from the response alone |
 
-Data provenance will remain distinct: purchase data comes from the platform, while outcome data comes from verified Virtual POS responses. A response can be recorded even when it contains no authorization code or card type.
+The extension contract will distinguish platform purchase data from received processor data and identify notification versus browser return. Merchant secrets, signatures, and sensitive card data must not be exposed in extension payloads. Context for unverified messages must be bounded and sanitized; an observer is not required to persist it.
+
+Request customization must occur before signing and pass the processor's final validation. Extensions must not override the server-side purchase amount or currency, change the recorded order identity, or bypass notification verification. Receipt, validated-outcome, and processed-outcome observers must not mutate the core payment result. Observer exceptions must be isolated and logged without rolling back a recorded payment or preventing core notification handling; a pre-payment filter failure must stop redirection before the request is sent.
+
+Receipt and validation hooks may run more than once for repeated messages. Payloads must provide stable attempt/order identifiers when available, and the processed hook must distinguish a duplicate from a newly applied result, so extensions can make their own side effects idempotent. Browser return events must not be presented as a second completed payment. Success observers must run only after the relevant database commit.
+
+Technical design will check for suitable existing shared-plugin hooks before introducing new ones, select filters for request customization and signals or equivalent observation hooks for events, and document public names, payloads, permitted changes, error behavior, and invocation order. Installation-specific reporting and additional storage implementations are outside this release.
 
 ## Future operational enhancements
 
@@ -95,7 +106,7 @@ If operational use shows that the existing transaction responses, audit trail, a
 
 | Component | Responsibility |
 | --- | --- |
-| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, and mapping outcomes to the shared recording flow |
+| `eox-redsys` | Processor registration, Getnet configuration, signed request, redirect page, response receipt and validation, attempt identification, mapping outcomes to the shared recording flow, and payment extension points |
 | `openedx-zeitlabs-payments` | Checkout, purchase, transactions and their processor responses (`Transaction.response`), audit trail (`AuditLog`), invoice, access fulfillment, and existing operational tools |
 | Open edX | User, course, organization, and enrollment |
 | Virtual POS configuration | Credentials and terminal, enabled notifications, contracted payment methods, internal retries disabled, and DCC disabled |
@@ -130,13 +141,15 @@ The release reuses the deployed plugin's existing invoicing and fulfillment beha
 | Approved payment with failed enrollment | The integration uses the plugin's existing failure handling and records, directs the user to support, and blocks another charge for the approved purchase |
 | Payment methods | The flow is validated with debit, credit, international, and AMEX cards using the cases available for the test merchant |
 | Special characters | Course and user names preserve accented characters and ñ in transmitted and displayed data |
-| Historical data | Later changes to the course price, name, or organization do not alter the recorded purchase data |
+| Payment extensions | An installation plugin can observe payment initiation, response receipt, validated outcomes, and completed processing through documented Open edX filters or Django signals, without modifying `eox-redsys` |
+| Extension safety | Incoming responses are marked unverified at receipt; request changes pass core validation before signing; repeated notifications expose correlation identifiers; observer failures do not roll back recorded payments or bypass validation |
+| Optional extensions | With no extension configured, the standard payment flow and shared records work without client-specific snapshots or reporting storage |
 | Currency | Charges are made in EUR and the terminal does not offer DCC in this release |
 | Retry configuration | The Virtual POS does not offer internal retries; a new attempt in Open edX receives a different order number |
 
 ## Validation and deployment
 
-Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, and delegation of fulfillment failures to the existing plugin flow. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase.
+Testing will cover signing and verification, order correlation, amounts and currency, Unicode preservation, response persistence through the existing plugin models, and business state transitions. Integration tests will cover notifications without a user session, duplicates and concurrency, repeat purchase blocking, and delegation of fulfillment failures to the existing plugin flow. Timeout validation will cover retry eligibility before and at expiration, a changed setting value, late notifications after a new attempt, and approvals for different attempts of the same purchase. Extension validation will cover lifecycle order, notification versus browser-return context, unverified and rejected messages, duplicate outcomes, post-commit success dispatch, observer failures, permitted request customization, and operation without installed receivers.
 
 Before production, the full flow will be validated in the Virtual POS test environment, including approval and decline outcomes, browser return, notification delivery, and required payment methods. Getnet must confirm that the merchant's contracted capabilities and configuration support those methods.
 
@@ -151,7 +164,7 @@ Deployment configuration will include protected credentials, environment selecti
 | Configuration and deployment | 2 |
 | Original total | 14 |
 
-The 14 hours remain a preliminary reference, subject to revision during technical design for the retained scope, including integration with existing transaction and audit records, historical data, browser-independent processing, concurrency control, and the configurable retry timeout. Additional Django Admin tracking, manual resolution, and fulfillment recovery enhancements are excluded from this estimate and would be assessed separately if needed.
+The 14 hours remain a preliminary reference, subject to revision during technical design for the retained scope, including integration with existing transaction and audit records, payment extension points, browser-independent processing, concurrency control, and the configurable retry timeout. Additional Django Admin tracking, manual resolution, and fulfillment recovery enhancements are excluded from this estimate and would be assessed separately if needed.
 
 ## Technical references
 
