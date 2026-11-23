@@ -318,3 +318,51 @@ def test_checkout_chooses_an_unused_order_when_random_reference_collides(purchas
     assert response.status_code == 200
     other.refresh_from_db()
     assert other.gateway_order_id == '123456789013'
+
+
+@pytest.fixture
+def iqd_purchase(purchase, settings):
+    """Configure a 45 IQD purchase with its three ISO minor-unit digits."""
+    cart, request = purchase
+    settings.ZEITLABS_PAYMENTS_SETTINGS = {**settings.ZEITLABS_PAYMENTS_SETTINGS, 'valid_currency': 'IQD'}
+    settings.REDSYS_SETTINGS = {**settings.REDSYS_SETTINGS, 'currency': 'IQD'}
+    item = cart.items.get()
+    item.catalogue_item.currency = 'IQD'
+    item.catalogue_item.price = '45'
+    item.catalogue_item.save()
+    item.original_price = item.final_price = '45'
+    item.save()
+    return cart, request
+
+
+def test_iqd_checkout_uses_three_iso_minor_unit_digits(iqd_purchase):
+    """A 45 IQD purchase requests exactly 45000 minor units from Redsys."""
+    # Arrange
+    cart, request = iqd_purchase
+
+    # Act
+    response = RedsysProcessor().payment_view(cart, request)
+
+    # Assert
+    encoded = re.search(rb'name="Ds_MerchantParameters" value="([^"]+)"', response.content).group(1)
+    data = json.loads(base64.urlsafe_b64decode(encoded + b'=' * (-len(encoded) % 4)))
+    assert data['DS_MERCHANT_AMOUNT'] == '45000'
+    assert data['DS_MERCHANT_CURRENCY'] == '368'
+
+
+def test_signed_iqd_underpayment_cannot_settle_the_full_purchase(iqd_purchase, client):
+    """A signed approval for 45 minor units cannot fulfill a 45 IQD purchase."""
+    # Arrange
+    cart, request = iqd_purchase
+    RedsysProcessor().payment_view(cart, request)
+    payload = notification(cart, Ds_Amount='45', Ds_Currency='368')
+    counts = (Transaction.objects.count(), Invoice.objects.count(), CourseEnrollment.objects.count())
+
+    # Act
+    response = client.post('/redsys/notification/', payload, secure=True)
+
+    # Assert
+    assert response.status_code == 400
+    cart.refresh_from_db()
+    assert cart.status == Cart.Status.PROCESSING
+    assert (Transaction.objects.count(), Invoice.objects.count(), CourseEnrollment.objects.count()) == counts

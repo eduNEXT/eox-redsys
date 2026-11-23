@@ -7,7 +7,6 @@ import re
 import secrets
 from decimal import Decimal
 
-from babel.numbers import get_currency_precision
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from django.db import IntegrityError, transaction
@@ -16,6 +15,7 @@ from zeitlabs_payments.constants import ISO_4217_NUMERIC_TO_ALPHA
 from zeitlabs_payments.exceptions import GatewayError
 from zeitlabs_payments.helpers import get_currency
 from zeitlabs_payments.providers.base import BaseProcessor
+from zeitlabs_payments.validators import get_currency_exponent
 
 SIGNATURE_VERSION = 'HMAC_SHA512_V2'
 GATEWAYS = {'test': 'https://sis-t.redsys.es:25443/sis/realizarPago', 'production': 'https://sis.redsys.es/sis/realizarPago'}
@@ -78,7 +78,7 @@ class RedsysProcessor(BaseProcessor):
         config, numeric = self.configuration()
         if get_currency(cart) != config['currency']:
             raise GatewayError('Purchase currency does not match Redsys currency')
-        amount = cart.total * (Decimal(10) ** get_currency_precision(config['currency']))
+        amount = cart.total * (Decimal(10) ** get_currency_exponent(config['currency']))
         if amount != amount.to_integral_value() or not 0 < amount < 10 ** 12:
             raise GatewayError('Purchase amount cannot be represented by Redsys')
         return str(int(amount)), numeric
