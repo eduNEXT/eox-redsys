@@ -1,4 +1,5 @@
-# Core requirements for using this application
--c constraints.txt
-
-Django             # Web application framework
+# Supported shared contract; older local snapshots lack order correlation and reconciliation.
+Django>=4.2,<5.3
+Babel>=2.12
+pycryptodome>=3.20
+openedx-zeitlabs-payments @ git+https://github.com/zeit-labs/openedx-zeitlabs-payments.git@f1669db7020951f810b9d9a3b3b996cfaf12fd36
