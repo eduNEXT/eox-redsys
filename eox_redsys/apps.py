@@ -14,3 +14,12 @@ class EoxRedsysConfig(AppConfig):
 
     name = 'eox_redsys'
     verbose_name = 'eox-redsys'
+    plugin_app = {
+        'url_config': {
+            'lms.djangoapp': {
+                'namespace': 'eox_redsys',
+                'relative_path': 'urls',
+                'regex': r'^redsys/',
+            },
+        },
+    }

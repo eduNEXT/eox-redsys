@@ -57,6 +57,7 @@ def load_requirements(*requirements_paths):
             )
 
     requirements = {}
+    direct_requirements = []
     constraint_files = set()
 
     # groups "pkg<=x.y.z,..." into ("pkg", "<=x.y.z,...")
@@ -68,6 +69,7 @@ def load_requirements(*requirements_paths):
     )
 
     def add_version_constraint_or_raise(current_line, current_requirements, add_if_not_present):
+        """Merge one requirement and reject conflicting version constraints."""
         regex_match = requirement_line_regex.match(current_line)
         if regex_match:
             package = regex_match.group(1)
@@ -90,7 +92,11 @@ def load_requirements(*requirements_paths):
         with open(path) as reqs:
             for line in reqs:
                 if is_requirement(line):
-                    add_version_constraint_or_raise(line, requirements, True)
+                    if ' @ ' in line:
+                        check_name_consistent(line.split(' @ ', 1)[0].strip())
+                        direct_requirements.append(line.strip())
+                    else:
+                        add_version_constraint_or_raise(line, requirements, True)
                 if line and line.startswith('-c') and not line.startswith('-c http'):
                     constraint_files.add(os.path.dirname(path) + '/' + line.split('#')[0].replace('-c', '').strip())
 
@@ -103,7 +109,7 @@ def load_requirements(*requirements_paths):
 
     # process back into list of pkg><=constraints strings
     constrained_requirements = [f'{pkg}{version or ""}' for (pkg, version) in sorted(requirements.items())]
-    return constrained_requirements
+    return constrained_requirements + direct_requirements
 
 
 def is_requirement(line):

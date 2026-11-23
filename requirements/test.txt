@@ -1,0 +1,9 @@
+# Standalone integration environment (Python 3.11+); installs this package and its pinned shared flow.
+-e .
+Django==5.2.19
+pytest==9.2.0
+pytest-django==4.14.0
+djangorestframework==3.18.3
+edx-django-utils==8.1.0
+edx-opaque-keys[django]==4.0.0
+edx-toggles==6.0.0

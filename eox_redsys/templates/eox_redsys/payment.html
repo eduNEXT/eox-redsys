@@ -1,1 +1,8 @@
-{# Payment page of Redsys. Context: transaction_parameters (from RedsysProcessor.get_transaction_parameters). #}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Continue to Redsys</title></head>
+<body><form method="post" action="{{ transaction_parameters.gateway_url }}" id="redsys-payment">
+<input type="hidden" name="Ds_SignatureVersion" value="{{ transaction_parameters.signature_version }}">
+<input type="hidden" name="Ds_MerchantParameters" value="{{ transaction_parameters.merchant_parameters }}">
+<input type="hidden" name="Ds_Signature" value="{{ transaction_parameters.signature }}">
+<button type="submit">Continue to Redsys</button>
+</form><script>document.getElementById('redsys-payment').submit();</script></body></html>

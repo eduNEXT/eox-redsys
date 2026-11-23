@@ -1,0 +1,12 @@
+SECRET_KEY = 'tests-only'
+USE_TZ = True
+DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
+INSTALLED_APPS = ['django.contrib.auth', 'django.contrib.contenttypes', 'django.contrib.sessions', 'django.contrib.sites', 'waffle', 'fake_models', 'zeitlabs_payments', 'eox_redsys']
+DEFAULT_AUTO_FIELD = 'django.db.models.AutoField'
+ROOT_URLCONF = 'tests.urls'
+ALLOWED_HOSTS = ['testserver']
+SITE_ID = 1
+MIDDLEWARE = ['django.middleware.csrf.CsrfViewMiddleware', 'django.contrib.sessions.middleware.SessionMiddleware', 'django.contrib.auth.middleware.AuthenticationMiddleware', 'django.contrib.sites.middleware.CurrentSiteMiddleware']
+TEMPLATES = [{'BACKEND': 'django.template.backends.django.DjangoTemplates', 'APP_DIRS': True}]
+ZEITLABS_PAYMENTS_SETTINGS = {'invoice_prefix': 'TEST', 'valid_currency': 'EUR'}
+REDSYS_SETTINGS = {'merchant_code': '999008881', 'terminal': '1', 'currency': 'EUR', 'environment': 'test', 'secret_key': 'sq7HjrUOBfKmC576'}

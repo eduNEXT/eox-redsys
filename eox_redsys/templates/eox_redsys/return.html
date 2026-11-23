@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Payment status</title></head><body>
+<h1>Payment status</h1>
+{% if status == 'paid' %}<p>Payment confirmed. Your course access is ready.</p><a href="{{ invoice_url }}">View invoice and course access</a>
+{% elif status == 'not_fulfilled' %}<p>{{ message }}</p>
+{% else %}<p>Payment confirmation pending. Please wait for confirmation before making another payment.</p>
+<script>
+const statusUrl = '{{ status_url|escapejs }}';
+const timer = setInterval(async () => {
+  try {
+    const response = await fetch(statusUrl, {credentials: 'same-origin'});
+    if (response.status !== 202) { clearInterval(timer); window.location.reload(); }
+  } catch (_) { clearInterval(timer); }
+}, 5000);
+</script>
+{% endif %}</body></html>
