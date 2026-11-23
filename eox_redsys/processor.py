@@ -99,6 +99,8 @@ class RedsysProcessor(BaseProcessor):
         amount, currency = self.purchase_amount(cart)
         order = f'{secrets.randbelow(10 ** 12):012d}'
         return_url = request.build_absolute_uri(self.get_return_url()) + '?order=' + order
+        if len(return_url) > 250:
+            raise GatewayError('Redsys return URLs must not exceed 250 characters')
         parameters = {
             'DS_MERCHANT_AMOUNT': amount, 'DS_MERCHANT_CURRENCY': currency,
             'DS_MERCHANT_ORDER': order, 'DS_MERCHANT_MERCHANTCODE': config['merchant_code'],

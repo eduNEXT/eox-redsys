@@ -402,3 +402,33 @@ def test_expired_session_can_sign_in_and_resume_the_full_return_path(purchase, c
     if paid:
         invoice = Invoice.objects.get(cart=cart)
         assert invoice.invoice_number.encode() in restored_page.content
+
+
+@pytest.mark.parametrize('return_length', [250, 251])
+def test_return_url_length_is_validated_before_recording_an_order(purchase, settings, return_length):
+    """The final OK/KO URLs accept 250 characters and reject 251 before handoff."""
+    # Arrange
+    cart, request = purchase
+    return_path = '/payment/v1/processor/redsys/return/'
+    host_length = return_length - len('https://' + return_path + '?order=' + '0' * 12)
+    hostname = 'a' * 63 + '.' + 'b' * 63 + '.' + 'c' * (host_length - 133) + '.test'
+    settings.ALLOWED_HOSTS = [hostname]
+    request.META['HTTP_HOST'] = hostname
+
+    # Act
+    if return_length == 250:
+        response = RedsysProcessor().payment_view(cart, request)
+    else:
+        with pytest.raises(GatewayError, match='250'):
+            RedsysProcessor().payment_view(cart, request)
+
+    # Assert
+    cart.refresh_from_db()
+    if return_length == 250:
+        encoded = re.search(rb'name="Ds_MerchantParameters" value="([^"]+)"', response.content).group(1)
+        data = json.loads(base64.urlsafe_b64decode(encoded + b'=' * (-len(encoded) % 4)))
+        assert len(data['DS_MERCHANT_URLOK']) == 250
+        assert data['DS_MERCHANT_URLOK'] == data['DS_MERCHANT_URLKO']
+        assert data['DS_MERCHANT_URLOK'].endswith('?order=' + cart.gateway_order_id)
+    else:
+        assert cart.gateway_order_id is None
