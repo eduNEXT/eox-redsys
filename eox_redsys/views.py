@@ -7,6 +7,7 @@ import logging
 import re
 from urllib.parse import urlsplit
 
+from django.contrib.auth.views import redirect_to_login
 from django.contrib.sites.models import Site
 from django.db import transaction
 from django.http import HttpResponse, JsonResponse
@@ -101,7 +102,9 @@ class RedsysReturnView(RedsysStatusView):
     def get(self, request, **kwargs):
         """Render the saved outcome or a waiting page for the purchase owner."""
         response = super().get(request, **kwargs)
-        if response.status_code in (401, 404):
+        if response.status_code == 401:
+            return redirect_to_login(request.get_full_path())
+        if response.status_code == 404:
             return response
         data = json.loads(response.content)
         return render(request, 'eox_redsys/return.html', {

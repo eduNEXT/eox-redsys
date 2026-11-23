@@ -2,6 +2,7 @@
 import base64
 import json
 import re
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from common.djangoapps.course_modes.models import CourseMode
@@ -366,3 +367,38 @@ def test_signed_iqd_underpayment_cannot_settle_the_full_purchase(iqd_purchase, c
     cart.refresh_from_db()
     assert cart.status == Cart.Status.PROCESSING
     assert (Transaction.objects.count(), Invoice.objects.count(), CourseEnrollment.objects.count()) == counts
+
+
+@pytest.mark.parametrize('paid', [False, True])
+def test_expired_session_can_sign_in_and_resume_the_full_return_path(purchase, client, paid):
+    """HTML returns restore login and preserve the order while status stays an API."""
+    # Arrange
+    cart, request = purchase
+    course = CourseOverview.objects.create(id='course-v1:org+course+run', org='org')
+    CourseMode.objects.create(course=course, sku='paid-course', mode_slug='verified', currency='EUR')
+    RedsysProcessor().payment_view(cart, request)
+    if paid:
+        client.post('/redsys/notification/', notification(cart), secure=True)
+    client.force_login(cart.user)
+    client.logout()
+    path = '/payment/v1/processor/redsys/return/?order=' + cart.gateway_order_id + '&source=redsys'
+    status_path = '/payment/v1/processor/redsys/status/?order=' + cart.gateway_order_id
+
+    # Act
+    status = client.get(status_path, secure=True)
+    page = client.get(path, secure=True)
+    client.force_login(cart.user)
+    restored_page = client.get(path, secure=True)
+
+    # Assert
+    assert status.status_code == 401
+    assert status.json() == {'status': 'login_required'}
+    assert page.status_code == 302
+    login_url = urlsplit(page['Location'])
+    assert login_url.path == '/accounts/login/'
+    assert parse_qs(login_url.query)['next'] == [path]
+    assert restored_page.status_code == 200
+    assert (b'Payment confirmed' if paid else b'Payment confirmation pending') in restored_page.content
+    if paid:
+        invoice = Invoice.objects.get(cart=cart)
+        assert invoice.invoice_number.encode() in restored_page.content
