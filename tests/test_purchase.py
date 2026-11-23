@@ -432,3 +432,23 @@ def test_return_url_length_is_validated_before_recording_an_order(purchase, sett
         assert data['DS_MERCHANT_URLOK'].endswith('?order=' + cart.gateway_order_id)
     else:
         assert cart.gateway_order_id is None
+
+
+@pytest.mark.parametrize('endpoint', ['status', 'return'])
+@pytest.mark.parametrize('query', ['', '?order='])
+def test_missing_or_empty_order_does_not_match_an_unstarted_cart(purchase, client, endpoint, query):
+    """Buyer-owned carts without an order never match an incomplete return URL."""
+    # Arrange
+    cart, _ = purchase
+    client.force_login(cart.user)
+    path = '/payment/v1/processor/redsys/' + endpoint + '/' + query
+
+    # Act
+    response = client.get(path, secure=True)
+
+    # Assert
+    assert response.status_code == 404
+    assert response.json() == {'status': 'not_found'}
+    cart.refresh_from_db()
+    assert cart.gateway_order_id is None
+    assert cart.status == Cart.Status.PROCESSING

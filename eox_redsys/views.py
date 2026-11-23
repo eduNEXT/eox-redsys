@@ -85,7 +85,10 @@ class RedsysStatusView(View):
         """Return the authenticated buyer's saved payment and fulfillment status."""
         if not request.user.is_authenticated:
             return JsonResponse({'status': 'login_required'}, status=401)
-        cart = Cart.objects.filter(user=request.user, gateway='redsys', gateway_order_id=request.GET.get('order')).first()
+        order = request.GET.get('order')
+        if not order:
+            return JsonResponse({'status': 'not_found'}, status=404)
+        cart = Cart.objects.filter(user=request.user, gateway='redsys', gateway_order_id=order).first()
         if not cart or cart.payment_origin != f'{request.scheme}://{request.get_host()}':
             return JsonResponse({'status': 'not_found'}, status=404)
         invoice = cart.invoices.first()
