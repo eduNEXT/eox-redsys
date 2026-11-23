@@ -69,6 +69,7 @@ def load_requirements(*requirements_paths):
     )
 
     def add_version_constraint_or_raise(current_line, current_requirements, add_if_not_present):
+        """Merge one requirement and reject conflicting version constraints."""
         regex_match = requirement_line_regex.match(current_line)
         if regex_match:
             package = regex_match.group(1)

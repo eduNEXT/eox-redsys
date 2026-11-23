@@ -28,6 +28,7 @@ class RedsysNotificationView(View):
     """Authenticate before entering the shared recording and fulfillment flow."""
 
     def post(self, request):
+        """Verify a notification and settle an approved purchase exactly once."""
         processor = RedsysProcessor()
         try:
             if not getattr(request, 'site', None):
@@ -80,6 +81,7 @@ class RedsysStatusView(View):
     """Read persisted results for the authenticated buyer; never settle on browser input."""
 
     def get(self, request, **kwargs):
+        """Return the authenticated buyer's saved payment and fulfillment status."""
         if not request.user.is_authenticated:
             return JsonResponse({'status': 'login_required'}, status=401)
         cart = Cart.objects.filter(user=request.user, gateway='redsys', gateway_order_id=request.GET.get('order')).first()
@@ -97,6 +99,7 @@ class RedsysReturnView(RedsysStatusView):
     """Show the recorded outcome and poll while the server notification is pending."""
 
     def get(self, request, **kwargs):
+        """Render the saved outcome or a waiting page for the purchase owner."""
         response = super().get(request, **kwargs)
         if response.status_code in (401, 404):
             return response

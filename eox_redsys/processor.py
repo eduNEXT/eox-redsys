@@ -30,6 +30,8 @@ def sign_parameters(encoded, order, secret):
 
 
 class RedsysProcessor(BaseProcessor):
+    """Prepare hosted payments and reconcile their original purchase values."""
+
     SLUG = 'redsys'
     NAME = 'Redsys'
     CHECKOUT_TEXT = 'Pay with Redsys'
@@ -40,6 +42,11 @@ class RedsysProcessor(BaseProcessor):
     GATEWAY_ORDER_ID_PARAM = 'order'
 
     def configuration(self):
+        """Return validated site settings and the numeric ISO currency code.
+
+        Raises:
+            GatewayError: If required merchant settings are missing or invalid.
+        """
         config = self.get_settings()
         numeric = {alpha: number for number, alpha in ISO_4217_NUMERIC_TO_ALPHA.items()}
         if (not isinstance(config, dict)
@@ -54,6 +61,7 @@ class RedsysProcessor(BaseProcessor):
         return config, numeric[config['currency']]
 
     def is_hidden_for(self, request):
+        """Hide checkout when the site's Redsys configuration is unusable."""
         try:
             self.configuration()
         except GatewayError:
@@ -61,6 +69,12 @@ class RedsysProcessor(BaseProcessor):
         return False
 
     def purchase_amount(self, cart):
+        """Return the purchase amount in minor units and its numeric currency.
+
+        Raises:
+            GatewayError: If the currency differs from the configuration or
+                the amount cannot be represented by Redsys without rounding.
+        """
         config, numeric = self.configuration()
         if get_currency(cart) != config['currency']:
             raise GatewayError('Purchase currency does not match Redsys currency')
@@ -80,6 +94,7 @@ class RedsysProcessor(BaseProcessor):
         raise GatewayError('Unable to allocate a unique Redsys order')
 
     def get_transaction_parameters(self, cart, request=None, use_client_side_checkout=False, **kwargs):
+        """Build a signed hosted-payment form from server-side purchase data."""
         config, _ = self.configuration()
         amount, currency = self.purchase_amount(cart)
         order = f'{secrets.randbelow(10 ** 12):012d}'
@@ -97,9 +112,15 @@ class RedsysProcessor(BaseProcessor):
                 'signature': sign_parameters(encoded, order, config['secret_key'])}
 
     def get_gateway_order_id(self, transaction_parameters):
+        """Return the order reference the shared flow records before redirection."""
         return transaction_parameters['order']
 
     def reconcile_payment(self, response, cart):
+        """Check that the response pays the original purchase amount and currency.
+
+        Raises:
+            GatewayError: If either value differs from the server-side purchase.
+        """
         amount, currency = self.purchase_amount(cart)
         if response.get('Ds_Amount') != amount or response.get('Ds_Currency') != currency:
             raise GatewayError('Redsys original purchase amount or currency mismatch')

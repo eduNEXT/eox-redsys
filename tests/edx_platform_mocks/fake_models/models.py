@@ -99,6 +99,7 @@ class CourseEnrollment(models.Model):
 
     @classmethod
     def enroll(cls, user, course_key, mode=None, check_access=False, can_upgrade=False, enterprise_uuid=None):
+        """Create the learner's enrollment once with the requested course mode."""
         cls.objects.get_or_create(
             user=user,
             course_id=course_key,
