@@ -68,20 +68,19 @@ class RedsysProcessor(BaseProcessor):
             return True
         return False
 
-    def purchase_amount(self, cart):
-        """Return the purchase amount in minor units and its numeric currency.
+    def purchase_amount(self, cart, currency):
+        """Return minor units using the currency from validated request settings.
 
         Raises:
             GatewayError: If the currency differs from the configuration or
                 the amount cannot be represented by Redsys without rounding.
         """
-        config, numeric = self.configuration()
-        if get_currency(cart) != config['currency']:
+        if get_currency(cart) != currency:
             raise GatewayError('Purchase currency does not match Redsys currency')
-        amount = cart.total * (Decimal(10) ** get_currency_exponent(config['currency']))
+        amount = cart.total * (Decimal(10) ** get_currency_exponent(currency))
         if amount != amount.to_integral_value() or not 0 < amount < 10 ** 12:
             raise GatewayError('Purchase amount cannot be represented by Redsys')
-        return str(int(amount)), numeric
+        return str(int(amount))
 
     def payment_view(self, cart, request=None, use_client_side_checkout=False, **kwargs):
         """Let the shared flow record the order, retrying a random-reference collision."""
@@ -95,8 +94,8 @@ class RedsysProcessor(BaseProcessor):
 
     def get_transaction_parameters(self, cart, request=None, use_client_side_checkout=False, **kwargs):
         """Build a signed hosted-payment form from server-side purchase data."""
-        config, _ = self.configuration()
-        amount, currency = self.purchase_amount(cart)
+        config, currency = self.configuration()
+        amount = self.purchase_amount(cart, config['currency'])
         order = f'{secrets.randbelow(10 ** 12):012d}'
         return_url = request.build_absolute_uri(self.get_return_url()) + '?order=' + order
         if len(return_url) > 250:
@@ -123,6 +122,7 @@ class RedsysProcessor(BaseProcessor):
         Raises:
             GatewayError: If either value differs from the server-side purchase.
         """
-        amount, currency = self.purchase_amount(cart)
+        config, currency = self.configuration()
+        amount = self.purchase_amount(cart, config['currency'])
         if response.get('Ds_Amount') != amount or response.get('Ds_Currency') != currency:
             raise GatewayError('Redsys original purchase amount or currency mismatch')

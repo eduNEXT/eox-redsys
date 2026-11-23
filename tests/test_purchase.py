@@ -452,3 +452,30 @@ def test_missing_or_empty_order_does_not_match_an_unstarted_cart(purchase, clien
     cart.refresh_from_db()
     assert cart.gateway_order_id is None
     assert cart.status == Cart.Status.PROCESSING
+
+
+def test_checkout_uses_one_validated_site_configuration_snapshot(purchase, settings, monkeypatch):
+    """One handoff keeps amount, currency, merchant and signing key consistent."""
+    # Arrange
+    cart, request = purchase
+    original = dict(settings.REDSYS_SETTINGS)
+    changed = {**original, 'currency': 'USD', 'merchant_code': '111111111', 'secret_key': 'different-secret'}
+    snapshots = iter([original, changed])
+
+    def site_setting(key, default):
+        """Simulate a site-configuration change between gateway settings reads."""
+        return next(snapshots) if key == 'REDSYS_SETTINGS' else default
+
+    monkeypatch.setattr('zeitlabs_payments.settings_service.configuration_helpers.get_value', site_setting)
+
+    # Act
+    response = RedsysProcessor().payment_view(cart, request)
+
+    # Assert
+    encoded = re.search(rb'name="Ds_MerchantParameters" value="([^"]+)"', response.content).group(1).decode()
+    data = json.loads(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
+    signature = re.search(rb'name="Ds_Signature" value="([^"]+)"', response.content).group(1).decode()
+    assert data['DS_MERCHANT_AMOUNT'] == '4525'
+    assert data['DS_MERCHANT_CURRENCY'] == '978'
+    assert data['DS_MERCHANT_MERCHANTCODE'] == '999008881'
+    assert signature == sign_parameters(encoded, data['DS_MERCHANT_ORDER'], original['secret_key'])
